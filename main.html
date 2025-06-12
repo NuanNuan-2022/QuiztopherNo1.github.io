@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Kahoot Lite P2P</title>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 50px; }
+    .hidden { display: none; }
+    #drop-zone { border: 2px dashed #888; padding: 30px; margin: 20px auto; width: 70%; display: none; }
+    .option { padding: 10px; margin: 5px; border: 1px solid #ccc; cursor: pointer; }
+    .option:hover { background: #eef; }
+  </style>
+</head>
+<body>
+  <h1>Kahoot Lite (P2P Version)</h1>
+
+  <div id="roleSelect">
+    <button onclick="startAsHost()">I'm the Host</button>
+    <button onclick="startAsPlayer()">I'm a Player</button>
+  </div>
+
+  <!-- HOST INTERFACE -->
+  <div id="hostUI" class="hidden">
+    <h3>Your Host ID (share with players):</h3>
+    <input id="hostIdDisplay" readonly />
+    <div id="drop-zone">Drop your quiz file (.txt) here</div>
+    <button onclick="startQuiz()" id="startQuizBtn" class="hidden">Start Quiz</button>
+    <div id="questionBox" class="hidden">
+      <h2 id="questionText"></h2>
+      <div id="optionsBox"></div>
+      <button onclick="nextQuestion()">Next</button>
+    </div>
+  </div>
+
+  <!-- PLAYER INTERFACE -->
+  <div id="playerUI" class="hidden">
+    <input id="peerIdInput" placeholder="Enter Host ID" />
+    <input id="playerName" placeholder="Your Name" />
+    <button onclick="connectToHost()">Join</button>
+    <div id="playerStatus"></div>
+    <div id="playerQuiz" class="hidden">
+      <h2 id="playerQuestion"></h2>
+      <div id="playerOptions"></div>
+    </div>
+  </div>
+
+  <script>
+    let peer, conn;
+    let connections = [];
+    let quiz = [], questionIndex = 0;
+
+    function startAsHost() {
+      document.getElementById("roleSelect").style.display = "none";
+      document.getElementById("hostUI").style.display = "block";
+
+      peer = new Peer();
+      peer.on('open', id => {
+        document.getElementById("hostIdDisplay").value = id;
+        document.getElementById("drop-zone").style.display = "block";
+      });
+
+      peer.on('connection', c => {
+        connections.push(c);
+        c.on('data', data => {
+          if (data.type === 'join') {
+            console.log(`${data.name} joined`);
+          }
+        });
+      });
+
+      setupDragDrop();
+    }
+
+    function startAsPlayer() {
+      document.getElementById("roleSelect").style.display = "none";
+      document.getElementById("playerUI").style.display = "block";
+      peer = new Peer();
+    }
+
+    function connectToHost() {
+      const hostId = document.getElementById("peerIdInput").value;
+      const name = document.getElementById("playerName").value;
+      if (!hostId || !name) return alert("Enter Host ID and Name");
+
+      conn = peer.connect(hostId);
+      conn.on('open', () => {
+        conn.send({ type: 'join', name });
+        document.getElementById("playerStatus").textContent = "Connected!";
+      });
+
+      conn.on('data', data => {
+        if (data.type === 'question') {
+          showPlayerQuestion(data.question);
+        }
+      });
+    }
+
+    function setupDragDrop() {
+      const dropZone = document.getElementById("drop-zone");
+      dropZone.addEventListener('dragover', e => {
+        e.preventDefault(); dropZone.style.background = "#eef";
+      });
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.style.background = "";
+      });
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          const lines = ev.target.result.trim().split('\n');
+          quiz = lines.map(line => {
+            const [q, a, b, c, d, correct] = line.split(';');
+            return { q, options: [a, b, c, d], correct };
+          });
+          document.getElementById("startQuizBtn").classList.remove("hidden");
+          dropZone.innerHTML = "Quiz Loaded!";
+        };
+        reader.readAsText(file);
+      });
+    }
+
+    function startQuiz() {
+      questionIndex = 0;
+      showQuestion();
+    }
+
+    function showQuestion() {
+      const q = quiz[questionIndex];
+      if (!q) return;
+
+      document.getElementById("questionBox").classList.remove("hidden");
+      document.getElementById("questionText").textContent = q.q;
+
+      const optBox = document.getElementById("optionsBox");
+      optBox.innerHTML = '';
+      ['A', 'B', 'C', 'D'].forEach((label, i) => {
+        const div = document.createElement("div");
+        div.className = "option";
+        div.textContent = `${label}: ${q.options[i]}`;
+        optBox.appendChild(div);
+      });
+
+      // Send to all players
+      connections.forEach(c => {
+        c.send({ type: 'question', question: q });
+      });
+    }
+
+    function nextQuestion() {
+      questionIndex++;
+      if (questionIndex < quiz.length) {
+        showQuestion();
+      } else {
+        alert("Quiz finished!");
+        connections.forEach(c => c.send({ type: 'end' }));
+      }
+    }
+
+    function showPlayerQuestion(q) {
+      document.getElementById("playerQuiz").classList.remove("hidden");
+      document.getElementById("playerQuestion").textContent = q.q;
+
+      const box = document.getElementById("playerOptions");
+      box.innerHTML = '';
+      ['A', 'B', 'C', 'D'].forEach((label, i) => {
+        const btn = document.createElement("button");
+        btn.textContent = `${label}: ${q.options[i]}`;
+        btn.onclick = () => {
+          conn.send({ type: 'answer', answer: label });
+          document.getElementById("playerQuiz").innerHTML = "<p>Answer submitted!</p>";
+        };
+        box.appendChild(btn);
+      });
+    }
+  </script>
+</body>
+</html>
